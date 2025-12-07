@@ -1,0 +1,471 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Dream Generator — AI-like, Frontend Only</title>
+<style>
+  :root{
+    --bg:#071126;
+    --panel:#0d1424;
+    --muted:#9fb0d9;
+    --accent:#ff7ab6;
+    --glass: rgba(255,255,255,0.04);
+  }
+  *{box-sizing:border-box;font-family:Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial}
+  html,body{height:100%;margin:0;background:linear-gradient(180deg,var(--bg) 0%, #08132a 100%);color:#e6eefc}
+  .wrap{max-width:1100px;margin:40px auto;padding:24px;display:grid;grid-template-columns:360px 1fr;gap:20px}
+  .card{background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));border-radius:14px;padding:18px;box-shadow:0 6px 30px rgba(3,7,18,0.6);backdrop-filter: blur(6px)}
+  h1{font-size:20px;margin:0 0 6px}
+  p.lead{margin:0 0 12px;color:var(--muted);font-size:13px}
+  label{display:block;font-size:12px;color:var(--muted);margin-top:10px;margin-bottom:6px}
+  input[type=text], textarea, select{width:100%;padding:10px;border-radius:8px;border:1px solid rgba(255,255,255,0.04);background:transparent;color:inherit;font-size:14px;outline:none}
+  textarea{min-height:88px;resize:vertical}
+  .controls{display:flex;gap:8px;margin-top:12px}
+  button{background:linear-gradient(90deg,var(--accent),#6dd5f7);border:none;padding:10px 12px;border-radius:10px;color:#071126;font-weight:700;cursor:pointer;box-shadow:0 8px 24px rgba(124,92,255,0.12)}
+  button.ghost{background:transparent;color:var(--muted);box-shadow:none;border:1px solid rgba(255,255,255,0.04)}
+  .meta{display:flex;gap:8px;align-items:center;margin-top:10px;font-size:13px;color:var(--muted)}
+  .sound-toggle{margin-left:auto;display:flex;gap:8px;align-items:center}
+  .canvas-wrap{position:relative;height:620px;border-radius:12px;overflow:hidden}
+  #dreamCanvas{width:100%;height:100%;display:block;background:linear-gradient(180deg, rgba(0,0,0,0.12), rgba(0,0,0,0.02))}
+  .overlay{position:absolute;inset:0;pointer-events:none}
+  .panel-right{display:flex;flex-direction:column;gap:12px}
+  .narrative{white-space:pre-wrap;font-size:16px;line-height:1.45;padding:14px;border-radius:10px;background:linear-gradient(90deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01));min-height:160px}
+  .bar{display:flex;gap:8px;align-items:center;justify-content:space-between}
+  .small{font-size:12px;color:var(--muted)}
+  .footer{font-size:12px;color:var(--muted);text-align:center;margin-top:18px}
+  .pill{padding:6px 8px;border-radius:999px;background:var(--glass);font-size:12px;color:var(--muted)}
+  .controls .btn-wide{flex:1}
+  .seed{font-family: monospace;background:rgba(255,255,255,0.03);padding:6px;border-radius:8px}
+  @media (max-width:980px){
+    .wrap{grid-template-columns:1fr; padding:18px}
+    .canvas-wrap{height:420px}
+  }
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <h1>Dream Generator</h1>
+      <p class="lead">Whisper a fear, a desire, and a memory. The dream engine weaves a surreal scene — narrative, visuals, and ambient sound — right in your browser.</p>
+
+      <label for="fear">Fear (one phrase)</label>
+      <input id="fear" type="text" placeholder="e.g. falling into silence" value="falling into silence">
+
+      <label for="desire">Desire (one phrase)</label>
+      <input id="desire" type="text" placeholder="e.g. finding an old photograph" value="finding an old photograph">
+
+      <label for="memory">Memory (short)</label>
+      <textarea id="memory" placeholder="e.g. summer night on my grandmother's porch">summer night on my grandmother's porch</textarea>
+
+      <div class="controls">
+        <button id="generate" class="btn-wide">Generate Dream</button>
+        <button id="regen" class="ghost">Regenerate</button>
+      </div>
+
+      <div class="meta">
+        <div class="pill">Frontend-only • No backend</div>
+        <div class="sound-toggle">
+          <label class="small">Ambient</label>
+          <input id="sound" type="checkbox" checked>
+        </div>
+      </div>
+
+      <div style="margin-top:12px;display:flex;gap:8px">
+        <button id="download" class="ghost">Download PNG</button>
+        <button id="copy" class="ghost">Copy Narrative</button>
+        <div style="margin-left:auto" class="small">Seed: <span id="seed" class="seed">—</span></div>
+      </div>
+
+      <div class="footer">Tip: click the canvas to freeze the animation and inspect shapes. Try different emotions — every dream is unique.</div>
+    </div>
+
+    <div class="panel-right">
+      <div class="card canvas-wrap" id="canvasCard">
+        <canvas id="dreamCanvas"></canvas>
+        <div class="overlay"></div>
+      </div>
+
+      <div class="card">
+        <div class="bar">
+          <div><strong>Generated Dream</strong></div>
+          <div class="small">A short surreal vignette</div>
+        </div>
+        <div id="narrative" class="narrative">Your dream will appear here after you press Generate.</div>
+      </div>
+    </div>
+  </div>
+
+<script>
+/*
+  Dream Generator — Frontend Only
+  - Narrative: generated on-the-fly using the user's inputs + seeded randomness + modular phrase banks.
+  - Visuals: Canvas with animated particles, morphing blobs and parallax layers influenced by mood.
+  - Sound: Simple WebAudio ambient generator (chords + soft noise), optional.
+  - Hooks: Where to plug a real AI API (commented).
+*/
+
+// Utility: seeded RNG (mulberry32)
+function makeSeededRng(seed) {
+  let t = seed >>> 0;
+  return function() {
+    t += 0x6D2B79F5;
+    var r = Math.imul(t ^ t >>> 15, 1 | t);
+    r = (r + Math.imul(r ^ r >>> 7, 61 | r)) ^ r;
+    return ((r ^ r >>> 14) >>> 0) / 4294967296;
+  }
+}
+function hashStringToSeed(s){
+  let h=2166136261|0;
+  for(let i=0;i<s.length;i++) h=(Math.imul(h^s.charCodeAt(i),16777619))|0;
+  return h >>> 0;
+}
+
+// DOM
+const fearEl = document.getElementById('fear');
+const desireEl = document.getElementById('desire');
+const memoryEl = document.getElementById('memory');
+const generateBtn = document.getElementById('generate');
+const regenBtn = document.getElementById('regen');
+const narrativeEl = document.getElementById('narrative');
+const seedEl = document.getElementById('seed');
+const downloadBtn = document.getElementById('download');
+const copyBtn = document.getElementById('copy');
+const soundToggle = document.getElementById('sound');
+
+let current = {seed: null, rng: Math.random, text: ''};
+
+// Phrase banks (modular, extend to taste)
+const motifs = {
+  places: ["a hallway of mirrors", "a shore where the tide forgets time", "a rooftop garden that breathes", "a broken carousel", "a subway station with no trains", "a library of lost lullabies"],
+  actors: ["a paper fox", "a gardener with glass hands", "an old gramophone that hums your name", "a child with a clock in their chest", "a salamander wearing a hat", "a silent conductor"],
+  actions: ["folds itself into childhood", "sings only when it rains", "counts the steps of your heartbeat", "traces constellations on your wounds", "unwraps a pocket of yesterday"],
+  adjectives: ["gossamer", "sourceless", "molten", "echoing", "stuttering", "velveteen", "half-remembered"]
+};
+
+// Narrative assembly
+function generateDreamText(fear, desire, memory, rng) {
+  // Normalize inputs a bit
+  fear = (fear||'').trim();
+  desire = (desire||'').trim();
+  memory = (memory||'').trim();
+
+  // Random choices via seed
+  const pick=(arr)=>(arr[Math.floor(rng()*arr.length)]);
+  const p1 = pick(motifs.places);
+  const p2 = pick(motifs.actors);
+  const verb = pick(motifs.actions);
+  const adj = pick(motifs.adjectives);
+
+  // Construct poetic narrative with small variations
+  const lines = [];
+  lines.push(`You step into ${p1}. The air tastes like ${adj} radio static.`);
+  if(fear) lines.push(`Somewhere beneath the wallpaper, you can feel "${fear}" folding itself into the floorboards.`);
+  if(memory) lines.push(`A single memory arrives — ${memory} — and it smells like wet postcards.`);
+  lines.push(`There is ${p2} there; it ${verb}.`);
+  if(desire) lines.push(`You try to reach for "${desire}", but your fingers become pages in a book you don't remember opening.`);
+  // add small surreal twist
+  const twist = [
+    "A clock apologizes and melts into a paper boat.",
+    "The moon trades places with a photograph, and they both look embarrassed.",
+    "You wake briefly to count a rain of tiny keys."
+  ];
+  lines.push(pick(twist));
+  lines.push("You feel both more lost and more exactly where you are.");
+  // optional short sign-off
+  lines.push(`— Dream generated at ${new Date().toLocaleTimeString()}`);
+
+  return lines.join("\n\n");
+}
+
+// Canvas visuals
+const canvas = document.getElementById('dreamCanvas');
+const ctx = canvas.getContext('2d');
+let W=0,H=0;
+function resizeCanvas(){
+  const rect = canvas.getBoundingClientRect();
+  W = Math.round(rect.width * devicePixelRatio);
+  H = Math.round(rect.height * devicePixelRatio);
+  canvas.width = W; canvas.height = H;
+  canvas.style.width = rect.width+'px';
+  canvas.style.height = rect.height+'px';
+}
+window.addEventListener('resize', resizeCanvas);
+resizeCanvas();
+
+// Particle system + blobs influenced by mood
+class Blob {
+  constructor(rng){
+    this.rng = rng;
+    this.reset();
+  }
+  reset(){
+    this.x = this.rng()*W;
+    this.y = this.rng()*H;
+    this.vx = (this.rng()-0.5)*0.6;
+    this.vy = (this.rng()-0.5)*0.6;
+    this.size = 40 + this.rng()*220;
+    this.h = Math.floor(200 + this.rng()*120);
+    this.s = 40 + this.rng()*40;
+    this.l = 40 + this.rng()*30;
+    this.mult = 0.6 + this.rng()*1.4;
+    this.phase = this.rng()*Math.PI*2;
+  }
+  step(dt, moodFactor){
+    this.phase += 0.002 * dt * this.mult;
+    this.x += this.vx * dt * (0.2 + moodFactor);
+    this.y += this.vy * dt * (0.2 + moodFactor);
+    if(this.x < -this.size || this.x > W+this.size || this.y < -this.size || this.y > H+this.size) this.reset();
+  }
+  draw(ctx){
+    const grd = ctx.createRadialGradient(this.x, this.y, 10, this.x, this.y, this.size);
+    grd.addColorStop(0, `hsla(${this.h} ${this.s}% ${Math.min(this.l+30,90)}% / 0.9)`.replace(/\s/g,','));
+    grd.addColorStop(1, `hsla(${(this.h+40)%360} ${this.s-10}% ${this.l-10}% / 0.02)`.replace(/\s/g,','));
+    ctx.beginPath();
+    ctx.fillStyle = grd;
+    ctx.ellipse(this.x, this.y, this.size*1.2, this.size, this.phase, 0, Math.PI*2);
+    ctx.fill();
+  }
+}
+
+// Initialize with a seeded set
+let blobs = [];
+function initBlobs(count, rng){
+  blobs = [];
+  for(let i=0;i<count;i++) blobs.push(new Blob(rng));
+}
+initBlobs(12, Math.random);
+
+// Animation loop
+let last = performance.now();
+let animRunning = true;
+let moodFactor = 0.6; // determines movement intensity, mapped from fear/desire
+function animLoop(t){
+  if(!animRunning){ last = t; return; }
+  const dt = Math.min(50, t-last);
+  last = t;
+
+  // fade background
+  ctx.clearRect(0,0,W,H);
+  // subtle background gradient
+  const bg = ctx.createLinearGradient(0,0,0,H);
+  bg.addColorStop(0, 'rgba(6,10,28,0.9)');
+  bg.addColorStop(1, 'rgba(2,4,12,0.9)');
+  ctx.fillStyle = bg;
+  ctx.fillRect(0,0,W,H);
+
+  // blobs
+  for(const b of blobs){ b.step(dt, moodFactor); b.draw(ctx); }
+
+  // moving stars / dust
+  const starCount = 80;
+  for(let i=0;i<starCount;i++){
+    const x = (i * 9973 % W) + Math.sin((t/5000 + i) * 0.001) * 40;
+    const y = (i * 2791 % H) + Math.cos((t/3000 + i) * 0.001) * 40;
+    const size = 0.6 + ((i*13)%6)/6;
+    ctx.beginPath();
+    ctx.fillStyle = `rgba(255,255,255,${0.02 + ((i%7)/50)})`;
+    ctx.ellipse(x,y,size,size,0,0,Math.PI*2);
+    ctx.fill();
+  }
+
+  // floating text fragments (subtle)
+  ctx.save();
+  ctx.globalAlpha = 0.06;
+  ctx.font = `${12 * devicePixelRatio}px serif`;
+  ctx.fillStyle = "#fff";
+  ctx.fillText("whisper", W*0.12, H*0.32);
+  ctx.fillText("remember", W*0.22, H*0.62);
+  ctx.fillText("echo", W*0.78, H*0.24);
+  ctx.restore();
+
+  requestAnimationFrame(animLoop);
+}
+requestAnimationFrame(animLoop);
+
+// Sound: simple ambient using WebAudio
+let audioCtx=null, masterGain=null, oscNodes=[];
+function startSound(seedRng){
+  if(!soundToggle.checked) return;
+  if(!audioCtx){
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    masterGain = audioCtx.createGain();
+    masterGain.gain.value = 0.045;
+    masterGain.connect(audioCtx.destination);
+  }
+  // clear previous
+  oscNodes.forEach(n => { try{ n.osc.stop() }catch(e){} n.osc.disconnect(); n.gain.disconnect(); });
+  oscNodes = [];
+
+  // create a few detuned oscillators for a pad
+  const base = 110 + Math.floor(seedRng()*8)*5;
+  const chord = [0, 3, 7]; // minor-ish
+  chord.forEach((interval,i)=>{
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.type = "sine";
+    const freq = base * Math.pow(2, interval/12) * (1 + (seedRng()-0.5)*0.02);
+    osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
+    gain.gain.value = 0.02 + i*0.01;
+    osc.connect(gain);
+    gain.connect(masterGain);
+    osc.start();
+    oscNodes.push({osc,gain});
+  });
+
+  // gentle noise via buffer oscillator
+  const bufferSize = 2 * audioCtx.sampleRate;
+  const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+  const data = buffer.getChannelData(0);
+  for (let i = 0; i < bufferSize; i++) data[i] = (seedRng()-0.5) * 0.02;
+  const noise = audioCtx.createBufferSource();
+  noise.buffer = buffer;
+  const noiseGain = audioCtx.createGain();
+  noiseGain.gain.value = 0.06;
+  noise.loop = true;
+  noise.connect(noiseGain); noiseGain.connect(masterGain);
+  noise.start();
+
+  // slow LFO on gain for movement
+  let t0 = audioCtx.currentTime;
+  oscNodes.forEach((n, idx)=>{
+    const a = 0.005 + idx*0.004;
+    const d = 0.5 + idx*0.3;
+    // setInterval-style ramping
+    const update = () => {
+      const val = 0.02 + Math.sin((audioCtx.currentTime - t0) * (0.05 + idx*0.01)) * a;
+      n.gain.gain.linearRampToValueAtTime(Math.max(0, val), audioCtx.currentTime + 0.1);
+    };
+    const iv = setInterval(update, 350);
+    n._iv = iv;
+  });
+}
+function stopSound(){
+  if(!audioCtx) return;
+  oscNodes.forEach(n => {
+    try{ n.osc.stop(); }catch(e){}
+    n.gain.disconnect();
+    clearInterval(n._iv);
+  });
+  oscNodes = [];
+  try{ audioCtx.close(); }catch(e){}
+  audioCtx = null;
+}
+
+// hooking UI
+generateBtn.addEventListener('click', ()=>{
+  const fear = fearEl.value || '';
+  const desire = desireEl.value || '';
+  const memory = memoryEl.value || '';
+  // create seed from combined input + timestamp approximate (but keep reproducible if inputs same)
+  const seedStr = (fear + '|' + desire + '|' + memory).toLowerCase();
+  const seed = hashStringToSeed(seedStr);
+  current.seed = seed;
+  current.rng = makeSeededRng(seed);
+  seedEl.textContent = seed;
+  // adjust visuals moodFactor: map fear length and desire polarity to movement
+  moodFactor = 0.2 + Math.min(1, (fear.length + desire.length)/40);
+
+  // text: here is where you'd call an AI text API (comment shows how)
+  /*
+    // Example (pseudo):
+    fetch('https://api.openai.com/v1/chat/completions', {
+      method:'POST', headers:{Authorization:'Bearer YOUR_KEY', 'Content-Type':'application/json'},
+      body: JSON.stringify({model:'gpt-4o-mini', messages:[{role:'system', content:'You are a dream poet...'},{role:'user', content:`fear:${fear}\ndesire:${desire}\nmemory:${memory}`}], max_tokens:240})
+    }).then(r=>r.json()).then(resp=>{ narrativeEl.textContent = resp.choices[0].message.content; });
+  */
+  // For this frontend demo we generate poetically:
+  const dreamText = generateDreamText(fear, desire, memory, current.rng);
+  narrativeEl.textContent = dreamText;
+  current.text = dreamText;
+
+  // visuals seeded
+  initBlobs(10 + Math.floor(current.rng()*12), current.rng);
+
+  // restart sound per seed
+  stopSound();
+  if(soundToggle.checked) startSound(current.rng);
+});
+regenBtn.addEventListener('click', ()=>{
+  if(!current.seed){ generateBtn.click(); return; }
+  // slightly mutate seed to get variant
+  const newSeed = (current.seed ^ Math.floor(Math.abs((Math.sin(current.seed) * 100000)) % 100000));
+  current.seed = newSeed;
+  current.rng = makeSeededRng(newSeed);
+  seedEl.textContent = newSeed;
+  moodFactor = 0.2 + Math.min(1, current.rng() + 0.3);
+  const fear=fearEl.value, desire=desireEl.value, memory=memoryEl.value;
+  narrativeEl.textContent = generateDreamText(fear, desire, memory, current.rng);
+  initBlobs(10 + Math.floor(current.rng()*12), current.rng);
+  stopSound();
+  if(soundToggle.checked) startSound(current.rng);
+});
+
+downloadBtn.addEventListener('click', ()=>{
+  // composite narrative onto canvas and download
+  // create temporary canvas
+  const tmp = document.createElement('canvas');
+  tmp.width = canvas.width; tmp.height = canvas.height + 240;
+  const tctx = tmp.getContext('2d');
+  // draw the current canvas
+  tctx.fillStyle = '#071126'; tctx.fillRect(0,0,tmp.width,tmp.height);
+  tctx.drawImage(canvas,0,0);
+  // draw narrative box
+  tctx.fillStyle = 'rgba(0,0,0,0.6)';
+  tctx.fillRect(0,canvas.height,tmp.width,240);
+  tctx.fillStyle = '#e9f1ff';
+  tctx.font = `${18 * devicePixelRatio}px serif`;
+  const text = current.text || narrativeEl.textContent;
+  // wrap text
+  const maxW = tmp.width - 60;
+  const lines = wrapTextLines(tctx, text, maxW);
+  let y = canvas.height + 40 * devicePixelRatio;
+  for(const line of lines.slice(0,10)){
+    tctx.fillText(line, 30 * devicePixelRatio, y);
+    y += 26 * devicePixelRatio;
+  }
+  const a = document.createElement('a');
+  a.href = tmp.toDataURL('image/png');
+  a.download = 'dream.png';
+  a.click();
+});
+copyBtn.addEventListener('click', ()=>{
+  navigator.clipboard.writeText(current.text || narrativeEl.textContent).then(()=>{
+    copyBtn.textContent = 'Copied!';
+    setTimeout(()=>copyBtn.textContent = 'Copy Narrative', 1200);
+  });
+});
+soundToggle.addEventListener('change', ()=>{
+  if(soundToggle.checked){
+    startSound(current.rng || Math.random);
+  } else stopSound();
+});
+
+// helpful text wrapping
+function wrapTextLines(ctx, text, maxWidth){
+  const words = text.split(/\s+/);
+  const lines = [];
+  let line = '';
+  for(const w of words){
+    const test = line ? line + ' ' + w : w;
+    const m = ctx.measureText(test).width;
+    if(m > maxWidth && line){
+      lines.push(line);
+      line = w;
+    } else line = test;
+  }
+  if(line) lines.push(line);
+  return lines;
+}
+
+// click canvas to pause/resume animation
+canvas.addEventListener('click', ()=>{
+  animRunning = !animRunning;
+  if(animRunning) requestAnimationFrame(animLoop);
+});
+
+// initial sample generation
+generateBtn.click();
+</script>
+</body>
+</html>
